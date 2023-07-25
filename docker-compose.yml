@@ -1,0 +1,222 @@
+version: '2.1'
+
+services:
+
+  transport-config-server:
+    image: transport-config-server
+    build:
+      context: ./transport-config-server
+      dockerfile: Dockerfile
+    ports:
+      - "8888:8888"
+    container_name: transport-config-server
+    environment:
+      - SPRING_CLOUD_CONFIG_SERVER_GIT_URI=https://github.com/anksl/transport-config.git
+      - SPRING_CLOUD_CONFIG_SERVER_GIT_USERNAME=transport-config-server
+      - SPRING_CLOUD_CONFIG_SERVER_GIT_PASSWORD=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
+      - SPRING_CLOUD_CONFIG_SERVER_GIT_DEFAULT-LABEL=master
+      - SPRING_CLOUD_CONFIG_SERVER_GIT_CLONE-ON-START=true
+    healthcheck:
+      test: "exit 0"
+    restart: always
+    networks:
+      - transport-network
+
+  user-service:
+    image: user-service
+    build:
+      context: ./user-service
+      dockerfile: Dockerfile
+    ports:
+      - "8084:8080"
+    container_name: user-service
+    depends_on:
+      transport-config-server:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      eureka-server:
+        condition: service_started
+    environment:
+      - SERVER_PORT=8084
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://db/mydb
+      - SPRING_DATASOURCE_USERNAME=postgres
+      - SPRING_DATASOURCE_PASSWORD=1111
+      - SPRING_CLOUD_CONFIG_URI=http://transport-config-server:8888
+      - eureka.client.serviceUrl.defaultZone=http://eureka-server:8761/eureka
+    restart: always
+    networks:
+      - transport-network
+
+  transportation-service:
+    image: transportation-service
+    build:
+      context: ./transport-without-user-service
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8080"
+    container_name: transportation-service
+    depends_on:
+      transport-config-server:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+      activemq:
+        condition: service_healthy
+    environment:
+      - SERVER_PORT=8081
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://db/mydb
+      - SPRING_DATASOURCE_USERNAME=postgres
+      - SPRING_DATASOURCE_PASSWORD=1111
+      - SPRING_ACTIVEMQ_BROKER-URL=tcp://activemq:61616
+      - SPRING_ACTIVEMQ_USER=admin
+      - SPRING_ACTIVEMQ_PASSWORD=admin
+      - SPRING_CLOUD_CONFIG_URI=http://transport-config-server:8888
+      - eureka.client.serviceUrl.defaultZone=http://eureka-server:8761/eureka
+    restart: always
+    networks:
+      - transport-network
+
+  email-service:
+    image: email-service
+    build:
+      context: ./email-service
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8080"
+    container_name: email-service
+    depends_on:
+      transport-config-server:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+      activemq:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      - SERVER_PORT=8082
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://db/mydb
+      - SPRING_DATASOURCE_USERNAME=postgres
+      - SPRING_DATASOURCE_PASSWORD=1111
+      - SPRING_ACTIVEMQ_BROKER-URL=tcp://activemq:61616
+      - SPRING_ACTIVEMQ_USER=admin
+      - SPRING_ACTIVEMQ_PASSWORD=admin
+      - KAFKA_SERVER=kafka:29092
+      - SPRING_CLOUD_CONFIG_URI=http://transport-config-server:8888
+      - eureka.client.serviceUrl.defaultZone=http://eureka-server:8761/eureka
+    restart: always
+    networks:
+      - transport-network
+
+  payment-service:
+    image: payment-service
+    build:
+      context: ./payment-service
+      dockerfile: Dockerfile
+    ports:
+      - "8083:8080"
+    container_name: payment-service
+    depends_on:
+      transport-config-server:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      - SERVER_PORT=8083
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://db/mydb
+      - SPRING_DATASOURCE_USERNAME=postgres
+      - SPRING_DATASOURCE_PASSWORD=1111
+      - KAFKA_SERVER=kafka:29092
+      - SPRING_CLOUD_CONFIG_URI=http://transport-config-server:8888
+      - eureka.client.serviceUrl.defaultZone=http://eureka-server:8761/eureka
+    restart: always
+    networks:
+      - transport-network
+
+  eureka-server:
+    image: eureka-server
+    build:
+      context: ./eureka-server
+      dockerfile: Dockerfile
+    ports:
+      - "8761:8761"
+    container_name: eureka-server
+    healthcheck:
+      test: "exit 0"
+    restart: always
+    networks:
+      - transport-network
+
+  db:
+    image: 'postgres:14.0'
+    container_name: db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=1111
+      - POSTGRES_DB=mydb
+    ports:
+      - "54320:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: "exit 0"
+    restart: always
+    networks:
+      - transport-network
+
+  activemq:
+    image: rmohr/activemq
+    container_name: activemq
+    ports:
+      - "61616:61616"
+      - "8161:8161"
+    healthcheck:
+      test: "exit 0"
+    networks:
+      - transport-network
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - 22181:2181
+    healthcheck:
+      test: "exit 0"
+    networks:
+      - transport-network
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    depends_on:
+      - zookeeper
+    ports:
+      - 29092:29092
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    healthcheck:
+      test: "exit 0"
+    networks:
+      - transport-network
+
+volumes:
+  db-data:
+
+networks:
+  transport-network:
+    driver: bridge
